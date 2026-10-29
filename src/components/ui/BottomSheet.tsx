@@ -1,7 +1,6 @@
 import React, { useEffect } from 'react';
-import { AnimatePresence, motion, type PanInfo } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
-import { spring } from '../../lib/motion';
 
 interface BottomSheetProps {
   open: boolean;
@@ -18,73 +17,64 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
 }) => {
   useEffect(() => {
     if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
-
-  const handleDragEnd = (
-    _event: MouseEvent | TouchEvent | PointerEvent,
-    info: PanInfo
-  ) => {
-    if (info.offset.y > 90 || info.velocity.y > 450) {
-      onClose();
-    }
-  };
+  }, [open]);
 
   return (
     <AnimatePresence>
       {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={title || 'Panel Bawah'}
-          className="fixed inset-0 z-50 flex flex-col justify-end md:hidden"
-        >
-          {/* Backdrop gelap transparan + blur */}
+        <div className="fixed inset-0 z-50 flex items-end justify-center">
+          {/* Backdrop ringan tanpa blur berlapis yang bikin HP ngelag */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
             onClick={onClose}
-            className="absolute inset-0 bg-ink/35 backdrop-blur-sm"
+            className="fixed inset-0 bg-ink/40"
           />
 
-          {/* Konten Sheet yang bisa ditarik turun */}
+          {/* Panel Bottom Sheet */}
           <motion.div
+            role="dialog"
+            aria-modal="true"
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
-            transition={spring}
-            drag="y"
-            dragConstraints={{ top: 0, bottom: 0 }}
-            dragElastic={{ top: 0.05, bottom: 0.6 }}
-            onDragEnd={handleDragEnd}
-            className="relative z-10 glass-strong rounded-t-4xl p-5 pb-safe shadow-float max-h-[90vh] overflow-y-auto"
+            transition={{ type: 'tween', duration: 0.22, ease: 'easeOut' }}
+            className="relative z-10 w-full max-w-lg rounded-t-[28px] bg-white border-t border-sky-100 shadow-float flex flex-col max-h-[88dvh]"
           >
-            {/* Handle tarik di atas */}
-            <div className="w-12 h-1.5 rounded-full bg-sky-200 mx-auto mb-4 cursor-grab active:cursor-grabbing" />
-
-            {title && (
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-bold text-ink">{title}</h2>
+            {/* Handle Bar & Header */}
+            <div className="px-5 pt-3 pb-2.5 border-b border-sky-100/80 shrink-0">
+              <div className="w-10 h-1 rounded-full bg-sky-200 mx-auto mb-2.5" />
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-extrabold text-ink">
+                  {title || 'Tambah Transaksi'}
+                </h2>
                 <button
                   type="button"
                   onClick={onClose}
                   aria-label="Tutup"
-                  className="w-9 h-9 rounded-full bg-sky-50 text-muted hover:text-ink flex items-center justify-center transition-colors"
+                  className="w-8 h-8 rounded-full bg-sky-50 text-muted hover:text-ink flex items-center justify-center active:scale-95 transition-transform"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
-            )}
+            </div>
 
-            {children}
+            {/* Isi Form */}
+            <div className="px-5 pt-3 pb-4 overflow-y-auto overscroll-contain flex-1">
+              {children}
+            </div>
           </motion.div>
         </div>
       )}
     </AnimatePresence>
   );
 };
+
+export default BottomSheet;

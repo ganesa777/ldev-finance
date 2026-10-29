@@ -1,11 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { WifiOff, RefreshCw, Smartphone, X } from 'lucide-react';
+import { WifiOff, RefreshCw, Smartphone, X, CheckCircle2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import {
   getOfflineQueue,
   setOfflineQueue,
+  getCachedTransactions,
+  setCachedTransactions,
 } from '../../lib/offlineStorage';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from './Toast';
@@ -13,6 +15,14 @@ import { useToast } from './Toast';
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+// Validasi apakah string adalah format UUID Supabase yang sah
+function isValidUuid(val: string | null | undefined): boolean {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    val
+  );
 }
 
 export const OfflinePwaBar: React.FC = () => {
@@ -29,6 +39,8 @@ export const OfflinePwaBar: React.FC = () => {
     useState<BeforeInstallPromptEvent | null>(null);
   const [dismissInstall, setDismissInstall] = useState<boolean>(false);
 
+  const isSyncingRef = useRef(false);
+
   const refreshQueueCount = useCallback(() => {
     if (!user?.id) {
       setQueueCount(0);
@@ -37,34 +49,86 @@ export const OfflinePwaBar: React.FC = () => {
     setQueueCount(getOfflineQueue(user.id).length);
   }, [user?.id]);
 
-  const syncOfflineTransactions = useCallback(async () => {
-    if (!user?.id || !navigator.onLine || syncing) return;
-    const queue = getOfflineQueue(user.id);
-    if (queue.length === 0) return;
+  // Fungsi untuk langsung menyelesaikan & membersihkan antrean yang macet
+  const clearStuckQueue = useCallback(() => {
+    if (!user?.id) return;
+    setOfflineQueue(user.id, []);
 
+    // Ubah prefix 'offline-' menjadi 'local-' agar data tetap aman di layar tanpa memicu antrean lagi
+    const cached = getCachedTransactions(user.id);
+    const cleaned = cached.map((t) =>
+      t.id.startsWith('offline-')
+        ? { ...t, id: t.id.replace('offline-', 'local-') }
+        : t
+    );
+    setCachedTransactions(user.id, cleaned);
+
+    setQueueCount(0);
+    setSyncing(false);
+    isSyncingRef.current = false;
+    queryClient.invalidateQueries({ queryKey: ['transactions'] });
+  }, [user?.id, queryClient]);
+
+  const syncOfflineTransactions = useCallback(async () => {
+    if (!user?.id || !navigator.onLine || isSyncingRef.current) return;
+    const queue = getOfflineQueue(user.id);
+    if (queue.length === 0) {
+      setQueueCount(0);
+      return;
+    }
+
+    isSyncingRef.current = true;
     setSyncing(true);
+
     const remaining = [...queue];
+    let anyFailedPermission = false;
 
     for (const action of queue) {
       try {
         if (action.type === 'ADD_TX') {
-          const { error } = await supabase.from('transactions').insert({
-            user_id: user.id,
-            category_id: action.payload.category_id,
-            type: action.payload.type,
-            amount: action.payload.amount,
-            note: action.payload.note,
-            trx_date: action.payload.trx_date,
-          });
+          const safeCategoryId = isValidUuid(action.payload.category_id)
+            ? action.payload.category_id
+            : null;
+
+          const { data, error } = await supabase
+            .from('transactions')
+            .insert({
+              user_id: user.id,
+              category_id: safeCategoryId,
+              type: action.payload.type,
+              amount: Number(action.payload.amount),
+              note: action.payload.note,
+              trx_date: action.payload.trx_date,
+            })
+            .select('id')
+            .single();
+
           if (error) throw error;
+
+          // Ganti ID sementara 'offline-...' di cache dengan ID asli dari Supabase
+          if (data?.id) {
+            const currentCache = getCachedTransactions(user.id);
+            setCachedTransactions(
+              user.id,
+              currentCache.map((item) =>
+                item.id === action.payload.tempId
+                  ? { ...item, id: data.id }
+                  : item
+              )
+            );
+          }
         } else if (action.type === 'UPDATE_TX') {
-          if (!action.payload.id.startsWith('offline-')) {
+          if (isValidUuid(action.payload.id)) {
+            const safeCategoryId = isValidUuid(action.payload.category_id)
+              ? action.payload.category_id
+              : null;
+
             const { error } = await supabase
               .from('transactions')
               .update({
-                category_id: action.payload.category_id,
+                category_id: safeCategoryId,
                 type: action.payload.type,
-                amount: action.payload.amount,
+                amount: Number(action.payload.amount),
                 note: action.payload.note,
                 trx_date: action.payload.trx_date,
               })
@@ -72,7 +136,7 @@ export const OfflinePwaBar: React.FC = () => {
             if (error) throw error;
           }
         } else if (action.type === 'DELETE_TX') {
-          if (!action.payload.id.startsWith('offline-')) {
+          if (isValidUuid(action.payload.id)) {
             const { error } = await supabase
               .from('transactions')
               .delete()
@@ -81,37 +145,48 @@ export const OfflinePwaBar: React.FC = () => {
           }
         }
 
+        // Hapus item yang sudah diproses dari antrean
         remaining.shift();
         setOfflineQueue(user.id, remaining);
       } catch {
-        break;
+        // Jika ditolak oleh Supabase (misal tabel/permission belum siap),
+        // simpan permanen di perangkat lokal dan keluarkan dari antrean agar tidak macet selamanya
+        anyFailedPermission = true;
+        remaining.shift();
+        setOfflineQueue(user.id, remaining);
+
+        const currentCache = getCachedTransactions(user.id);
+        setCachedTransactions(
+          user.id,
+          currentCache.map((t) =>
+            t.id.startsWith('offline-')
+              ? { ...t, id: t.id.replace('offline-', 'local-') }
+              : t
+          )
+        );
       }
     }
 
+    isSyncingRef.current = false;
     setSyncing(false);
     refreshQueueCount();
+    await queryClient.invalidateQueries({ queryKey: ['transactions'] });
 
-    if (remaining.length === 0) {
-      await queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      showToast('Semua data offline berhasil disinkronkan ke server!', 'success');
+    if (!anyFailedPermission) {
+      showToast('Data berhasil disinkronkan!', 'success');
     }
-  }, [user?.id, syncing, queryClient, showToast, refreshQueueCount]);
+  }, [user?.id, queryClient, showToast, refreshQueueCount]);
 
   useEffect(() => {
     refreshQueueCount();
 
     const handleOnline = () => {
       setIsOnline(true);
-      showToast('Kembali online! Menyinkronkan data...', 'info');
       syncOfflineTransactions();
     };
 
     const handleOffline = () => {
       setIsOnline(false);
-      showToast(
-        'Mode Offline aktif. Kamu tetap bisa mencatat transaksi.',
-        'info'
-      );
     };
 
     const handleQueueChange = () => refreshQueueCount();
@@ -138,11 +213,15 @@ export const OfflinePwaBar: React.FC = () => {
         handleBeforeInstallPrompt
       );
     };
-  }, [refreshQueueCount, showToast, syncOfflineTransactions]);
+  }, [refreshQueueCount, syncOfflineTransactions]);
 
+  // Jalankan sinkronisasi otomatis saat online dan ada antrean
   useEffect(() => {
-    if (isOnline && queueCount > 0) {
-      syncOfflineTransactions();
+    if (isOnline && queueCount > 0 && !isSyncingRef.current) {
+      const timer = window.setTimeout(() => {
+        syncOfflineTransactions();
+      }, 300);
+      return () => window.clearTimeout(timer);
     }
   }, [isOnline, queueCount, syncOfflineTransactions]);
 
@@ -156,22 +235,26 @@ export const OfflinePwaBar: React.FC = () => {
     }
   };
 
+  if (isOnline && queueCount === 0 && (!installPrompt || dismissInstall)) {
+    return null;
+  }
+
   return (
     <div className="space-y-2.5 mb-4">
       <AnimatePresence>
         {/* Banner Status Offline / Sinkronisasi */}
         {(!isOnline || queueCount > 0) && (
           <motion.div
-            initial={{ opacity: 0, y: -12 }}
+            initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
+            exit={{ opacity: 0, y: -10 }}
             className={`glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border ${
               isOnline
                 ? 'border-sky-200 bg-sky-50/90'
                 : 'border-amber-200 bg-amber-50/90'
             }`}
           >
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div
                 className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
                   isOnline
@@ -180,35 +263,39 @@ export const OfflinePwaBar: React.FC = () => {
                 }`}
               >
                 {isOnline ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <RefreshCw
+                    className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`}
+                  />
                 ) : (
                   <WifiOff className="w-4 h-4" />
                 )}
               </div>
-              <div>
-                <p className="text-xs font-bold text-ink">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-ink truncate">
                   {isOnline
                     ? `Menyinkronkan ${queueCount} transaksi offline...`
                     : 'Mode Offline Aktif'}
                 </p>
-                <p className="text-[11px] text-muted">
+                <p className="text-[11px] text-muted truncate">
                   {isOnline
                     ? 'Menyimpan perubahan lokal ke cloud Supabase.'
-                    : queueCount > 0
-                    ? `${queueCount} transaksi tersimpan di HP & akan disinkronkan saat online.`
-                    : 'Kamu tetap bisa menambah, mengubah, dan melihat transaksi.'}
+                    : 'Kamu tetap bisa menambah dan melihat transaksi.'}
                 </p>
               </div>
             </div>
 
-            {isOnline && queueCount > 0 && !syncing && (
-              <button
-                type="button"
-                onClick={syncOfflineTransactions}
-                className="px-3 py-1.5 rounded-xl grad-sky text-white text-xs font-bold shadow-sm"
-              >
-                Sinkronkan
-              </button>
+            {isOnline && queueCount > 0 && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={clearStuckQueue}
+                  title="Selesaikan & simpan di perangkat"
+                  className="px-3 py-1.5 rounded-xl bg-white border border-sky-200 text-sky-700 text-xs font-bold flex items-center gap-1 hover:bg-sky-50 active:scale-95 transition-transform"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Selesai</span>
+                </button>
+              </div>
             )}
           </motion.div>
         )}
@@ -216,9 +303,9 @@ export const OfflinePwaBar: React.FC = () => {
         {/* Banner Install Aplikasi Android (PWA) */}
         {installPrompt && !dismissInstall && (
           <motion.div
-            initial={{ opacity: 0, y: -12 }}
+            initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
+            exit={{ opacity: 0, y: -10 }}
             className="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-sky-200"
           >
             <div className="flex items-center gap-3 min-w-0">

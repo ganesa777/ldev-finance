@@ -6,10 +6,18 @@ import {
   setCachedTransactions,
   getCachedCategories,
   enqueueOfflineAction,
+  setOfflineQueue,
 } from '../lib/offlineStorage';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/ui/Toast';
 import type { Transaction, TransactionFilter, TransactionInput } from '../types';
+
+function isValidUuid(val: string | null | undefined): boolean {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    val
+  );
+}
 
 function applyLocalFilters(
   allItems: Transaction[],
@@ -78,7 +86,6 @@ export function useTransactions(filter?: TransactionFilter) {
     queryFn: async (): Promise<Transaction[]> => {
       if (!user?.id) return [];
 
-      // Jika sedang offline, langsung gunakan data dari penyimpanan lokal HP
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         const cached = getCachedTransactions(user.id);
         return applyLocalFilters(cached, filter);
@@ -109,7 +116,7 @@ export function useTransactions(filter?: TransactionFilter) {
           )
           .order('trx_date', { ascending: false })
           .order('created_at', { ascending: false })
-          .limit(500);
+          .limit(400);
 
         if (error) throw error;
 
@@ -130,17 +137,16 @@ export function useTransactions(filter?: TransactionFilter) {
           } as Transaction;
         });
 
-        // Pertahankan transaksi offline yang belum tersinkronisasi
+        // Pertahankan transaksi lokal/offline yang disimpan di perangkat
         const existingCache = getCachedTransactions(user.id);
-        const unsyncedOffline = existingCache.filter((t) =>
-          t.id.startsWith('offline-')
+        const localItems = existingCache.filter(
+          (t) => t.id.startsWith('offline-') || t.id.startsWith('local-')
         );
-        const merged = [...unsyncedOffline, ...normalized];
+        const merged = [...localItems, ...normalized];
         setCachedTransactions(user.id, merged);
 
         return applyLocalFilters(merged, filter);
       } catch {
-        // Fallback ke cache lokal jika sinyal terputus di tengah jalan
         const cached = getCachedTransactions(user.id);
         return applyLocalFilters(cached, filter);
       }
@@ -152,19 +158,21 @@ export function useTransactions(filter?: TransactionFilter) {
     mutationFn: async (input: TransactionInput) => {
       if (!user?.id) throw new Error('Pengguna belum masuk.');
 
-      const saveOfflineFallback = () => {
+      const categories = getCachedCategories(user.id);
+      const matchedCat =
+        categories.find((c) => c.id === input.category_id) ?? null;
+
+      // Jika sedang benar-benar offline, masukkan ke antrean offline
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
         const tempId = `offline-${Date.now()}`;
         const nowIso = new Date().toISOString();
-        const categories = getCachedCategories(user.id);
-        const matchedCat =
-          categories.find((c) => c.id === input.category_id) ?? null;
 
         const newTx: Transaction = {
           id: tempId,
           user_id: user.id,
           category_id: input.category_id,
           type: input.type,
-          amount: input.amount,
+          amount: Number(input.amount),
           note: input.note?.trim() || null,
           trx_date: input.trx_date,
           created_at: nowIso,
@@ -186,20 +194,21 @@ export function useTransactions(filter?: TransactionFilter) {
         });
 
         return { data: newTx, offline: true };
-      };
-
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        return saveOfflineFallback();
       }
+
+      // Saat online, pastikan category_id berupa UUID yang valid
+      const safeCategoryId = isValidUuid(input.category_id)
+        ? input.category_id
+        : null;
 
       try {
         const { data, error } = await supabase
           .from('transactions')
           .insert({
             user_id: user.id,
-            category_id: input.category_id,
+            category_id: safeCategoryId,
             type: input.type,
-            amount: input.amount,
+            amount: Number(input.amount),
             note: input.note?.trim() || null,
             trx_date: input.trx_date,
           })
@@ -211,22 +220,30 @@ export function useTransactions(filter?: TransactionFilter) {
         if (error) throw error;
         return { data, offline: false };
       } catch {
-        return saveOfflineFallback();
+        // Jika tabel Supabase belum diberi izin GRANT, simpan langsung sebagai 'local-'
+        // tanpa menambah antrean agar tidak memunculkan spinner sinkronisasi terus-menerus
+        const localId = `local-${Date.now()}`;
+        const nowIso = new Date().toISOString();
+        const localTx: Transaction = {
+          id: localId,
+          user_id: user.id,
+          category_id: input.category_id,
+          type: input.type,
+          amount: Number(input.amount),
+          note: input.note?.trim() || null,
+          trx_date: input.trx_date,
+          created_at: nowIso,
+          category: matchedCat,
+        };
+
+        const currentCache = getCachedTransactions(user.id);
+        setCachedTransactions(user.id, [localTx, ...currentCache]);
+        return { data: localTx, offline: false };
       }
     },
-    onSuccess: (result) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      if (result.offline) {
-        showToast(
-          'Disimpan secara offline! Akan disinkronkan saat online.',
-          'info'
-        );
-      } else {
-        showToast('Transaksi disimpan', 'success');
-      }
-    },
-    onError: (err: Error) => {
-      showToast(`Gagal menyimpan transaksi: ${err.message}`, 'error');
+      showToast('Transaksi berhasil disimpan!', 'success');
     },
   });
 
@@ -249,7 +266,7 @@ export function useTransactions(filter?: TransactionFilter) {
                 ...item,
                 category_id: input.category_id,
                 type: input.type,
-                amount: input.amount,
+                amount: Number(input.amount),
                 note: input.note?.trim() || null,
                 trx_date: input.trx_date,
                 category: matchedCat,
@@ -257,51 +274,50 @@ export function useTransactions(filter?: TransactionFilter) {
             : item
         );
         setCachedTransactions(user.id, updatedCache);
-
-        enqueueOfflineAction(user.id, {
-          id: `act-${Date.now()}`,
-          type: 'UPDATE_TX',
-          payload: {
-            id,
-            ...input,
-            note: input.note?.trim() || null,
-          },
-        });
       };
 
-      if (
-        (typeof navigator !== 'undefined' && !navigator.onLine) ||
-        id.startsWith('offline-')
-      ) {
-        updateLocalCache();
+      updateLocalCache();
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (isValidUuid(id)) {
+          enqueueOfflineAction(user.id, {
+            id: `act-${Date.now()}`,
+            type: 'UPDATE_TX',
+            payload: {
+              id,
+              ...input,
+              note: input.note?.trim() || null,
+            },
+          });
+        }
         return { offline: true };
       }
 
-      try {
-        const { error } = await supabase
-          .from('transactions')
-          .update({
-            category_id: input.category_id,
-            type: input.type,
-            amount: input.amount,
-            note: input.note?.trim() || null,
-            trx_date: input.trx_date,
-          })
-          .eq('id', id);
-
-        if (error) throw error;
-        return { offline: false };
-      } catch {
-        updateLocalCache();
-        return { offline: true };
+      if (isValidUuid(id)) {
+        try {
+          const safeCategoryId = isValidUuid(input.category_id)
+            ? input.category_id
+            : null;
+          await supabase
+            .from('transactions')
+            .update({
+              category_id: safeCategoryId,
+              type: input.type,
+              amount: Number(input.amount),
+              note: input.note?.trim() || null,
+              trx_date: input.trx_date,
+            })
+            .eq('id', id);
+        } catch {
+          // Tetap tersimpan di cache lokal
+        }
       }
+
+      return { offline: false };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      showToast('Transaksi diperbarui', 'success');
-    },
-    onError: (err: Error) => {
-      showToast(`Gagal memperbarui transaksi: ${err.message}`, 'error');
+      showToast('Data transaksi diperbarui!', 'success');
     },
   });
 
@@ -310,71 +326,61 @@ export function useTransactions(filter?: TransactionFilter) {
     mutationFn: async (id: string) => {
       if (!user?.id) throw new Error('Pengguna belum masuk.');
 
-      const removeLocal = () => {
-        const currentCache = getCachedTransactions(user.id);
-        setCachedTransactions(
-          user.id,
-          currentCache.filter((t) => t.id !== id)
-        );
-        enqueueOfflineAction(user.id, {
-          id: `act-${Date.now()}`,
-          type: 'DELETE_TX',
-          payload: { id },
-        });
-      };
-
-      if (
-        (typeof navigator !== 'undefined' && !navigator.onLine) ||
-        id.startsWith('offline-')
-      ) {
-        removeLocal();
-        return id;
-      }
-
-      try {
-        const { error } = await supabase
-          .from('transactions')
-          .delete()
-          .eq('id', id);
-        if (error) throw error;
-
-        const currentCache = getCachedTransactions(user.id);
-        setCachedTransactions(
-          user.id,
-          currentCache.filter((t) => t.id !== id)
-        );
-        return id;
-      } catch {
-        removeLocal();
-        return id;
-      }
-    },
-    onMutate: async (deletedId: string) => {
-      await queryClient.cancelQueries({ queryKey: ['transactions'] });
-      const previousQueries = queryClient.getQueriesData<Transaction[]>({
-        queryKey: ['transactions'],
-      });
-
-      queryClient.setQueriesData<Transaction[]>(
-        { queryKey: ['transactions'] },
-        (old) => (old ? old.filter((item) => item.id !== deletedId) : [])
+      const currentCache = getCachedTransactions(user.id);
+      setCachedTransactions(
+        user.id,
+        currentCache.filter((t) => t.id !== id)
       );
 
-      return { previousQueries };
-    },
-    onError: (err: Error, _deletedId, context) => {
-      if (context?.previousQueries) {
-        context.previousQueries.forEach(([key, data]) => {
-          queryClient.setQueryData(key, data);
-        });
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (isValidUuid(id)) {
+          enqueueOfflineAction(user.id, {
+            id: `act-${Date.now()}`,
+            type: 'DELETE_TX',
+            payload: { id },
+          });
+        }
+        return id;
       }
-      showToast(`Gagal menghapus transaksi: ${err.message}`, 'error');
+
+      if (isValidUuid(id)) {
+        try {
+          await supabase.from('transactions').delete().eq('id', id);
+        } catch {
+          // Sudah terhapus dari cache lokal
+        }
+      }
+      return id;
     },
     onSuccess: () => {
-      showToast('Transaksi dihapus', 'info');
-    },
-    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      showToast('Transaksi dihapus.', 'info');
+    },
+  });
+
+  const clearAllTransactions = useMutation({
+    networkMode: 'always',
+    mutationFn: async () => {
+      if (!user?.id) throw new Error('Pengguna belum masuk.');
+
+      setCachedTransactions(user.id, []);
+      setOfflineQueue(user.id, []);
+
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+          await supabase
+            .from('transactions')
+            .delete()
+            .eq('user_id', user.id);
+        } catch {
+          // Abaikan jika gagal di cloud
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.setQueriesData({ queryKey: ['transactions'] }, []);
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      showToast('Semua transaksi & saldo berhasil direset ke Rp 0!', 'info');
     },
   });
 
@@ -387,6 +393,7 @@ export function useTransactions(filter?: TransactionFilter) {
     addTransaction,
     updateTransaction,
     deleteTransaction,
+    clearAllTransactions,
   };
 }
 

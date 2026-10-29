@@ -4,11 +4,18 @@ import App from './App';
 import './index.css';
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
-      // Abaikan jika gagal di browser yang membatasi SW
+  if (import.meta.env.PROD) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
     });
-  });
+  } else {
+    // Saat di localhost (dev), hapus service worker lama agar tidak membuat layar putih
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      for (const reg of registrations) {
+        reg.unregister();
+      }
+    });
+  }
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
