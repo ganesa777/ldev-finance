@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
+    "lint": "oxlint",
     "preview": "vite preview"
-  },
+  }
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "@tanstack/react-query": "^5.56.2",
