@@ -2,99 +2,95 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg-from: #F8FCFF;
-  --bg-to: #E3F3FF;
-  --sky-50: #F0F9FF;
-  --sky-100: #E0F2FE;
-  --sky-200: #BAE6FD;
-  --sky-300: #7DD3FC;
-  --sky-400: #38BDF8;
-  --sky-500: #0EA5E9;
-  --sky-600: #0284C7;
-  --sky-700: #0369A1;
-  --ink: #0F2A43;
-  --muted: #6B84A0;
-  --card: rgba(255, 255, 255, 0.72);
-  --card-border: rgba(255, 255, 255, 0.9);
-  --income: #10B981;
-  --expense: #F43F5E;
-  --warning: #F59E0B;
-}
+@layer base {
+  html {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    color: #0F2A43;
+    background-color: #F0F9FF;
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
 
-* {
-  box-sizing: border-box;
-  -webkit-tap-highlight-color: transparent;
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
-  min-height: 100%;
-  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-  color: var(--ink);
-  background: linear-gradient(180deg, var(--bg-from) 0%, var(--bg-to) 100%);
-  overflow-x: hidden;
-}
-
-.tabular-nums {
-  font-variant-numeric: tabular-nums;
-}
-
-.glass-card {
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 10px 40px -12px rgba(14, 165, 233, 0.25);
-}
-
-.glass-strong {
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.95);
-}
-
-@supports not (backdrop-filter: blur(20px)) {
-  .glass-card,
-  .glass-strong {
-    background: rgba(255, 255, 255, 0.94);
+  body {
+    min-height: 100vh;
+    overflow-x: hidden;
+    background-color: #F0F9FF;
+    color: #0F2A43;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 }
 
-.grad-sky {
-  background: linear-gradient(135deg, #7DD3FC 0%, #38BDF8 45%, #0EA5E9 100%);
+@layer components {
+  /* Di layar HP (<768px) gunakan gradien kaca putih yang terakselerasi GPU agar scroll 60fps tanpa lag */
+  .glass-card {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.92) 0%,
+      rgba(248, 252, 255, 0.86) 100%
+    );
+    border: 1px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 8px 24px -6px rgba(14, 165, 233, 0.12),
+      0 2px 8px -2px rgba(15, 42, 67, 0.04);
+    transform: translateZ(0);
+  }
+
+  /* Di layar Tablet/Desktop gunakan backdrop-filter penuh */
+  @media (min-width: 768px) {
+    .glass-card {
+      background: rgba(255, 255, 255, 0.74);
+      backdrop-filter: blur(14px) saturate(150%);
+      -webkit-backdrop-filter: blur(14px) saturate(150%);
+    }
+  }
+
+  .glass-strong {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.96);
+    transform: translateZ(0);
+  }
+
+  .grad-sky {
+    background: linear-gradient(135deg, #38BDF8 0%, #0EA5E9 55%, #0284C7 100%);
+  }
+
+  .shadow-glass {
+    box-shadow: 0 10px 28px -8px rgba(14, 165, 233, 0.16),
+      0 4px 10px -3px rgba(15, 42, 67, 0.05);
+  }
+
+  .shadow-float {
+    box-shadow: 0 18px 38px -10px rgba(14, 165, 233, 0.24),
+      0 6px 14px -4px rgba(15, 42, 67, 0.08);
+  }
+
+  .shadow-glow {
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.28);
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+@keyframes shimmerMove {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 .shimmer {
-  background: linear-gradient(90deg, #E0F2FE 25%, #F0F9FF 50%, #E0F2FE 75%);
+  background: linear-gradient(
+    90deg,
+    rgba(224, 242, 254, 0.55) 25%,
+    rgba(255, 255, 255, 0.9) 50%,
+    rgba(224, 242, 254, 0.55) 75%
+  );
   background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-}
-
-@keyframes shimmer {
-  to {
-    background-position: -200% 0;
-  }
-}
-
-.pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-/* Sembunyikan scrollbar di karusel horizontal namun tetap bisa digeser */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .shimmer {
-    animation: none;
-  }
+  animation: shimmerMove 1.6s infinite linear;
 }

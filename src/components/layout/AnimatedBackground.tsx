@@ -7,21 +7,18 @@ export const AnimatedBackground: React.FC = () => {
   return (
     <div
       aria-hidden="true"
-      className="fixed inset-0 -z-10 overflow-hidden pointer-events-none"
-      style={{
-        background: 'linear-gradient(180deg, #F8FCFF 0%, #E3F3FF 100%)',
-      }}
+      className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-gradient-to-br from-[#F0F9FF] via-[#E0F2FE] to-[#F8FAFC]"
+      style={{ transform: 'translateZ(0)' }}
     >
-      {/* Blob 1 - Sky 300 Kiri Atas */}
+      {/* Blob 1: Kiri Atas — Radial Gradient murni (Tanpa beban CSS Filter Blur berat di GPU HP) */}
       <motion.div
-        className="absolute -top-28 -left-28 w-[420px] h-[420px] rounded-full bg-sky-300/45 blur-3xl"
         animate={
           shouldReduceMotion
             ? undefined
             : {
-                x: [0, 40, -30, 0],
-                y: [0, -30, 40, 0],
-                scale: [1, 1.15, 0.95, 1],
+                x: [0, 40, -20, 0],
+                y: [0, 30, -15, 0],
+                scale: [1, 1.06, 0.96, 1],
               }
         }
         transition={{
@@ -29,18 +26,22 @@ export const AnimatedBackground: React.FC = () => {
           repeat: Infinity,
           ease: 'easeInOut',
         }}
+        style={{
+          background:
+            'radial-gradient(circle, rgba(56,189,248,0.28) 0%, rgba(56,189,248,0.08) 45%, rgba(56,189,248,0) 72%)',
+        }}
+        className="absolute -top-32 -left-32 w-[460px] h-[460px] rounded-full will-change-transform"
       />
 
-      {/* Blob 2 - Sky 200 Kanan Tengah */}
+      {/* Blob 2: Kanan Tengah */}
       <motion.div
-        className="absolute top-1/4 -right-32 w-[420px] h-[420px] rounded-full bg-sky-200/50 blur-3xl"
         animate={
           shouldReduceMotion
             ? undefined
             : {
-                x: [0, -45, 25, 0],
-                y: [0, 35, -25, 0],
-                scale: [1, 0.92, 1.12, 1],
+                x: [0, -35, 25, 0],
+                y: [0, 40, -25, 0],
+                scale: [1, 0.95, 1.05, 1],
               }
         }
         transition={{
@@ -48,18 +49,22 @@ export const AnimatedBackground: React.FC = () => {
           repeat: Infinity,
           ease: 'easeInOut',
         }}
+        style={{
+          background:
+            'radial-gradient(circle, rgba(14,165,233,0.22) 0%, rgba(14,165,233,0.06) 45%, rgba(14,165,233,0) 72%)',
+        }}
+        className="absolute top-1/4 -right-36 w-[500px] h-[500px] rounded-full will-change-transform"
       />
 
-      {/* Blob 3 - Sky 400 Bawah Tengah */}
+      {/* Blob 3: Bawah Tengah */}
       <motion.div
-        className="absolute -bottom-36 left-1/3 w-[420px] h-[420px] rounded-full bg-sky-400/35 blur-3xl"
         animate={
           shouldReduceMotion
             ? undefined
             : {
-                x: [0, 30, -40, 0],
-                y: [0, -40, 20, 0],
-                scale: [1, 1.1, 0.95, 1],
+                x: [0, 25, -30, 0],
+                y: [0, -30, 20, 0],
+                scale: [1, 1.05, 0.96, 1],
               }
         }
         transition={{
@@ -67,17 +72,14 @@ export const AnimatedBackground: React.FC = () => {
           repeat: Infinity,
           ease: 'easeInOut',
         }}
-      />
-
-      {/* Lapisan pola titik halus untuk tekstur kaca */}
-      <div
-        className="absolute inset-0 opacity-[0.03]"
         style={{
-          backgroundImage:
-            'radial-gradient(#0F2A43 1px, transparent 1px)',
-          backgroundSize: '20px 20px',
+          background:
+            'radial-gradient(circle, rgba(125,211,252,0.30) 0%, rgba(125,211,252,0.08) 45%, rgba(125,211,252,0) 72%)',
         }}
+        className="absolute -bottom-40 left-1/4 w-[520px] h-[520px] rounded-full will-change-transform"
       />
     </div>
   );
 };
+
+export default AnimatedBackground;
